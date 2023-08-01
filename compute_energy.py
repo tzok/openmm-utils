@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+import argparse
 import subprocess
 import sys
 import tempfile
@@ -34,10 +35,26 @@ def bootstrap_amber(pdb_file: IO):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--input", help="(optional) Path to a PDB file (default is stdin)"
+    )
+    parser.add_argument(
+        "--output",
+        help="(optional) Path to output PDB file to contain structure after minimization (default is no output)",
+    )
+    args = parser.parse_args()
+
     with tempfile.NamedTemporaryFile(suffix=".pdb") as pdbfixer_file:
         with tempfile.NamedTemporaryFile("rt+", suffix=".pdb") as input_file:
+            if args.input is None:
+                content = sys.stdin.read()
+            else:
+                with open(args.input) as f:
+                    content = f.read()
+
             with input_file.file as f:
-                f.write(sys.stdin.read())
+                f.write(content)
 
             # Introduce general fixes
             subprocess.run(
@@ -105,10 +122,11 @@ if __name__ == "__main__":
             )
             print(energy[0], energy[1])
 
-            # Save the minimized structure
-            with open("/tmp/minimized.pdb", "w") as output:
-                PDBFile.writeModel(
-                    simulation.topology,
-                    simulation.context.getState(getPositions=True).getPositions(),
-                    output,
-                )
+            if args.output is not None:
+                # Save the minimized structure
+                with open(args.output, "w") as output:
+                    PDBFile.writeModel(
+                        simulation.topology,
+                        simulation.context.getState(getPositions=True).getPositions(),
+                        output,
+                    )
