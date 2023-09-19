@@ -14,6 +14,8 @@ def bootstrap_amber(pdb_file: IO):
         with tempfile.NamedTemporaryFile() as inpcrd_file:
             with tempfile.NamedTemporaryFile("rt+") as script:
                 # Generate the tleap script
+                script.write("source leaprc.water.tip3p\n")
+                script.write("source leaprc.DNA.OL15\n")
                 script.write("source leaprc.RNA.OL3\n")
                 script.write(f"molecule = loadpdb {pdb_file.name}\n")
                 script.write(
@@ -88,45 +90,54 @@ if __name__ == "__main__":
                 check=True,
             )
 
-            system, topology, positions = bootstrap_amber(pdb_file)
+            # Load the PDB into Amber system / topology / positions
+            try:
+                system, topology, positions = bootstrap_amber(pdb_file)
+            except subprocess.CalledProcessError as ex:
+                print(
+                    "Failed to load the PDB into Amber system\n"
+                    + f"Command: {ex.cmd}\n"
+                    + f"Return code: {ex.returncode}\n"
+                    + f"Standard output: {ex.stdout.decode()}\n"
+                    + f"Standard error: {ex.stderr.decode()}"
+                )
 
-            # Set all charges to zero to disable electrostatics.
-            for force in system.getForces():
-                if isinstance(force, NonbondedForce):
-                    for i in range(force.getNumParticles()):
-                        charge, sigma, epsilon = force.getParticleParameters(i)
-                        force.setParticleParameters(
-                            i, 0 * unit.elementary_charge, sigma, epsilon
-                        )
-
-            # Create a simulation
-            integrator = VariableLangevinIntegrator(
-                300 * unit.kelvin, 1.0 / unit.picosecond, 0.002 * unit.picoseconds
-            )
-            simulation = Simulation(topology, system, integrator)
-            simulation.context.setPositions(positions)
-
-            # Compute the energy
-            state = simulation.context.getState(getEnergy=True)
-            energy = [
-                state.getPotentialEnergy().value_in_unit(unit.kilocalories_per_mole)
-            ]
-
-            # Perform energy minimization
-            simulation.minimizeEnergy()
-
-            # Compute the energy
-            state = simulation.context.getState(getEnergy=True)
-            energy.append(
-                state.getPotentialEnergy().value_in_unit(unit.kilocalories_per_mole)
-            )
-            print(energy[0], energy[1])
-
-            if args.output is not None:
-                # Save the minimized structure
-                with open(args.output, "w") as output:
-                    PDBFile.writeModel(
-                        simulation.topology,
-                        simulation.context.getState(getPositions=True).getPositions(),
-                        output,
+        # Set all charges to zero to disable electrostatics.
+        # Otherwise PDBs without explicit solvent get ridiculous high energy
+        for force in system.getForces():
+            if isinstance(force, NonbondedForce):
+                for i in range(force.getNumParticles()):
+                    charge, sigma, epsilon = force.getParticleParameters(i)
+                    force.setParticleParameters(
+                        i, 0 * unit.elementary_charge, sigma, epsilon
                     )
+
+        # Create a simulation
+        integrator = VariableLangevinIntegrator(
+            300 * unit.kelvin, 1.0 / unit.picosecond, 0.002 * unit.picoseconds
+        )
+        simulation = Simulation(topology, system, integrator)
+        simulation.context.setPositions(positions)
+
+        # Compute the energy
+        state = simulation.context.getState(getEnergy=True)
+        energy = [state.getPotentialEnergy().value_in_unit(unit.kilocalories_per_mole)]
+
+        # Perform energy minimization
+        simulation.minimizeEnergy()
+
+        # Compute the energy
+        state = simulation.context.getState(getEnergy=True)
+        energy.append(
+            state.getPotentialEnergy().value_in_unit(unit.kilocalories_per_mole)
+        )
+        print(energy[0], energy[1])
+
+        if args.output is not None:
+            # Save the minimized structure
+            with open(args.output, "w") as output:
+                PDBFile.writeModel(
+                    simulation.topology,
+                    simulation.context.getState(getPositions=True).getPositions(),
+                    output,
+                )
